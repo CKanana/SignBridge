@@ -1,0 +1,9 @@
+# Optional CLI-only dependencies (audio -> text with Whisper).
+#
+# NOT used by the HTTP API. Installing this pulls PyTorch (~several hundred MB)
+# and is only needed for `python main.py` -> "1. Audio".
+#
+#   pip install -r requirements-cli.txt
+
+-r requirements.txt
+openai-whisper==20250625

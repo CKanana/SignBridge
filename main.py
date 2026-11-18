@@ -1,31 +1,54 @@
 import os
-import whisper
 import animation_lib
 from animation_lib import AnimationDirector
-import spacy
 
-# Load the language model
-# If missing: python -m spacy download en_core_web_sm
-nlp = spacy.load("en_core_web_sm")
+# Resolve every project path relative to this file so the engine works from any
+# working directory (the API never changes the process working directory).
+ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-AUDIO_DIR = "INPUT_AUDIO"
-POSE_DIR = "Pose"
+AUDIO_DIR = os.path.join(ROOT_DIR, "INPUT_AUDIO")
+POSE_DIR = os.path.join(ROOT_DIR, "Pose")
+
+SPACY_MODEL = os.environ.get("SIGNBRIDGE_SPACY_MODEL", "en_core_web_sm")
 
 VALID_AUDIO_FORMATS = ['.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.aac']
+
+# Lazily initialised so importing the engine (API startup) does not download or
+# load the language model. Whisper is also imported lazily (audio mode only).
+nlp = None
+
+
+def get_nlp():
+    """Load the spaCy language model on first use.
+
+    If the model is missing: python -m spacy download en_core_web_sm
+    """
+    global nlp
+    if nlp is None:
+        import spacy
+
+        nlp = spacy.load(SPACY_MODEL)
+    return nlp
+
+
+def _available_poses():
+    """Uppercase gloss names that have a pose file (dataset is lowercase)."""
+    return {
+        os.path.splitext(f)[0].upper()
+        for f in os.listdir(POSE_DIR)
+    }
+
 
 def gen_pose(text):
     """
     Transforms text into a sequence of glosses.
     Filters auxiliaries (AUX) and splits proper nouns (PROPN) into letters.
     """
-    doc = nlp(text)
+    doc = get_nlp()(text)
     gloss_list = []
 
     # Set of available files for quick lookup
-    available_poses = {
-        os.path.splitext(f)[0].upper()
-        for f in os.listdir(POSE_DIR)
-    }
+    available_poses = _available_poses()
 
     for token in doc:
         # 1. Skip punctuation and whitespace
@@ -57,17 +80,27 @@ def gen_pose(text):
 
     return gloss_list
 
-def gen_vid(sequence_pose, output_filename):
-    """Renders the video from the pose sequence."""
+
+def gen_vid(sequence_pose, output_filename, preview=None):
+    """Renders the video from the pose sequence.
+
+    ``preview=None`` auto-detects headless mode; the API passes ``preview=False``
+    so no GUI calls are made in a container.
+    """
     director = AnimationDirector(
         poses_dir=POSE_DIR,
-        output_file=output_filename
+        output_file=output_filename,
+        preview=preview,
     )
     print(f"Rendering video: {output_filename}...")
     director.render_sequence(sequence_pose)
 
+
 def audio_to_text(file_path):
     """Transcribes audio to text using Whisper on CPU with FP32 precision."""
+    # Imported here so the API never pays the PyTorch import cost.
+    import whisper
+
     # Force model loading on CPU
     model = whisper.load_model("base", device="cpu")
 
@@ -78,6 +111,7 @@ def audio_to_text(file_path):
     print("Detected text:", result["text"])
     return result["text"]
 
+
 def get_audio_files(path):
     """Retrieves the list of valid audio files."""
     if not os.path.isdir(path):
@@ -86,6 +120,7 @@ def get_audio_files(path):
         f for f in os.listdir(path)
         if os.path.splitext(f)[1].lower() in VALID_AUDIO_FORMATS
     ]
+
 
 def main():
     print("\n--- Sign Language Animation Pipeline ---")
@@ -130,10 +165,13 @@ def main():
     # Common phase: gloss conversion and video rendering
     try:
         pose_sequence = gen_pose(text_to_process)
-        gen_vid(pose_sequence, output_filename)
+        # preview=None: opens the live window locally, stays headless when
+        # SIGNBRIDGE_HEADLESS=1 (e.g. running the CLI inside the container).
+        gen_vid(pose_sequence, output_filename, preview=None)
         print("\nProcess completed successfully.")
     except Exception as e:
         print(f"\nError during processing: {e}")
+
 
 if __name__ == "__main__":
     main()

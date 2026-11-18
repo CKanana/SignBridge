@@ -5,6 +5,26 @@ from scipy.interpolate import interp1d
 import os
 
 
+def resolve_pose_file(poses_dir, name):
+    """Return the pose JSON path for a gloss.
+
+    Glosses are displayed/compared in uppercase but the Pose/ dataset stores
+    every file in lowercase, so filenames must be resolved lowercase. This
+    keeps lookups working on case-sensitive filesystems (Linux containers).
+    """
+    return os.path.join(poses_dir, f"{str(name).lower()}.json")
+
+
+def _headless_requested():
+    """True when the process must not open any GUI window."""
+    return os.environ.get("SIGNBRIDGE_HEADLESS", "0").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+
 class PoseLoader:
     """
     Handles the loading, parsing, and mathematical interpolation of JSON data.
@@ -25,7 +45,7 @@ class PoseLoader:
             return None, None
 
         # open the file
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             raw = json.load(f)
         # Handle different formats (flat list or 'frames' dictionary)
         data = raw["frames"] if "frames" in raw else raw
@@ -405,9 +425,16 @@ class AnimationDirector:
     Director: orchestrates the Loader and Renderer to produce the final video.
     """
 
-    def __init__(self, poses_dir, output_file="output_sequence.mp4"):
+    def __init__(self, poses_dir, output_file="output_sequence.mp4", preview=None):
         self.poses_dir = poses_dir
         self.output_file = output_file
+
+        # Live preview window. Disabled in headless/API rendering; ``None``
+        # auto-detects from SIGNBRIDGE_HEADLESS so the CLI keeps its preview.
+        if preview is None:
+            self.preview = not _headless_requested()
+        else:
+            self.preview = bool(preview)
 
         # Keep the frame rate high as required (30 fps source)
         self.loader = PoseLoader(source_fps=30, target_fps=30)
@@ -417,6 +444,30 @@ class AnimationDirector:
         # How many frames should the smooth transition last?
         # 10 frames at 30fps = 0.33 seconds (fast but visible)
         self.transition_frames = 10
+
+    def _show_preview(self, img):
+        """Draw the preview frame. Returns True when the user pressed 'q'.
+
+        Failures (headless OpenCV, no display server) permanently disable the
+        preview instead of interrupting a render that is otherwise valid.
+        """
+        if not self.preview:
+            return False
+        try:
+            cv2.imshow("Preview", img)
+            return (cv2.waitKey(1) & 0xFF) == ord("q")
+        except Exception:
+            self.preview = False
+            return False
+
+    def _close_preview(self):
+        if not self.preview:
+            return
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+        self.preview = False
 
     def _create_transition(self, start_pose, end_pose, steps):
         """
@@ -443,7 +494,7 @@ class AnimationDirector:
         common_joints = None
 
         for name in pose_names:
-            path = os.path.join(self.poses_dir, f"{name}.json")
+            path = resolve_pose_file(self.poses_dir, name)
             print(f"Loading: {name}...")
 
             matrix, joints = self.loader.load_sequence(path)
@@ -471,6 +522,12 @@ class AnimationDirector:
             self.loader.target_fps,
             (self.renderer.w, self.renderer.h),
         )
+        if not out.isOpened():
+            raise RuntimeError(
+                f"Could not open a video writer for {self.output_file!r} "
+                f"(fourcc=mp4v, {self.renderer.w}x{self.renderer.h}). "
+                "Check that the output directory exists and is writable."
+            )
 
         # Approximate frame count (including transition frames)
         total_frames_est = sum(len(s[0]) for s in segments) + (len(segments)-1) * self.transition_frames
@@ -503,11 +560,9 @@ class AnimationDirector:
                     self.renderer.draw_frame(img, frame_joints, pose_name="...")
 
                     out.write(img)
-                    cv2.imshow("Preview", img)
-                    # Maximum speed for the preview
-                    if cv2.waitKey(1) & 0xFF == ord("q"):
+                    if self._show_preview(img):
                         out.release()
-                        cv2.destroyAllWindows()
+                        self._close_preview()
                         return
                     frame_counter += 1
 
@@ -525,11 +580,9 @@ class AnimationDirector:
                     print(f"Render: {frame_counter}", end="\r")
 
                 out.write(img)
-                cv2.imshow("Preview", img)
-
-                if cv2.waitKey(1) & 0xFF == ord("q"):
+                if self._show_preview(img):
                     out.release()
-                    cv2.destroyAllWindows()
+                    self._close_preview()
                     return
 
                 frame_counter += 1
@@ -538,5 +591,5 @@ class AnimationDirector:
             last_pose_frame = matrix[-1]
 
         out.release()
-        cv2.destroyAllWindows()
+        self._close_preview()
         print(f"\nDone! Video saved to: {self.output_file}")

@@ -1,0 +1,33 @@
+# Keep the build context small; Pose/ (681 MB) must remain included.
+.git
+.gitignore
+.gitattributes
+.venv
+venv
+env
+ENV
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Generated media / local outputs
+*.mp4
+outputs
+test_headless.mp4
+video_from_text.mp4
+
+# Local configuration (never bake secrets into an image)
+.env
+.env.*
+!.env.example
+
+# Docs are not needed at runtime
+docs
+Documentazione
+
+# Container metadata
+Dockerfile
+.dockerignore

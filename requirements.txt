@@ -1,5 +1,18 @@
-openai-whisper
-spacy
-opencv-python
-numpy
-scipy
+# SignBridge animation service -- API runtime dependencies (pinned).
+#
+# Python 3.11. No PyTorch/Whisper: neither HTTP endpoint uses audio, and the
+# engine no longer imports Whisper at module startup. See requirements-cli.txt
+# if you need the optional audio-to-text CLI mode.
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+numpy==2.1.3
+scipy==1.14.1
+
+# Headless build: no GUI/X11 libraries are required in the container.
+opencv-python-headless==4.10.0.84
+
+# Gloss generation (gen_pose -> spaCy) plus its pinned English model.
+spacy==3.8.3
+en-core-web-sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
